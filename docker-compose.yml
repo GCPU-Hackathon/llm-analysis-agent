@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  medchatbot:
+    build:
+      context: .
+    container_name: medchatbot
+    environment:
+      - ENV=development
+      - PROJECT_ID=${PROJECT_ID}
+      - LOCATION=${LOCATION}
+      - RAG_CORPUS=${RAG_CORPUS}
+      - MODEL_ID=${MODEL_ID}
+      - GOOGLE_CLOUD_API_KEY=${GOOGLE_CLOUD_API_KEY}
+    env_file:
+      - .env
+    ports:
+      - "8956:8000"
+    command: python main.py
