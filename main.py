@@ -3,7 +3,6 @@ from pydantic import BaseModel
 from typing import List, Dict, Optional
 from google import genai
 from google.genai import types
-import base64
 import os
 import uuid
 from dotenv import load_dotenv
@@ -32,16 +31,12 @@ class ConversationResponse(BaseModel):
     messages: List[Message]
 
 # Configuration from environment variables
-PROJECT_ID = os.getenv("PROJECT_ID")
-LOCATION = os.getenv("LOCATION")
 RAG_CORPUS = os.getenv("RAG_CORPUS")
 MODEL_ID = os.getenv("MODEL_ID")
 GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY")
 
 # Validate required environment variables
 required_vars = {
-    "PROJECT_ID": PROJECT_ID,
-    "LOCATION": LOCATION,
     "RAG_CORPUS": RAG_CORPUS,
     "MODEL_ID": MODEL_ID,
     "GOOGLE_CLOUD_API_KEY": GOOGLE_CLOUD_API_KEY
@@ -58,6 +53,7 @@ def generate_response(messages: List[Dict]) -> str:
     client = genai.Client(
         vertexai=True,
         api_key=GOOGLE_CLOUD_API_KEY,
+        location="us-east4",
     )
 
     # Convert messages to genai format
@@ -209,8 +205,6 @@ async def health_check():
     try:
         # Check if all environment variables are loaded
         config_status = {
-            "PROJECT_ID": bool(PROJECT_ID),
-            "LOCATION": bool(LOCATION),
             "RAG_CORPUS": bool(RAG_CORPUS),
             "MODEL_ID": bool(MODEL_ID),
             "GOOGLE_CLOUD_API_KEY": bool(GOOGLE_CLOUD_API_KEY) and len(GOOGLE_CLOUD_API_KEY) > 10
