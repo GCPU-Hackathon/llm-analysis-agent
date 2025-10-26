@@ -1,1 +1,7 @@
 .env
+__pycache__/
+*/__pycache__/
+controllers/__pycache__/
+schemas/__pycache__/
+*/__init__.py
+*/*.pyc

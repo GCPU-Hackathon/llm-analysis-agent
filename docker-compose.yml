@@ -4,14 +4,34 @@ services:
   medchatbot:
     build:
       context: .
+      args:
+        WWWUSER: 1000
+        WWWGROUP: 1000
     container_name: medchatbot
     environment:
       - ENV=development
       - RAG_CORPUS=${RAG_CORPUS}
       - MODEL_ID=${MODEL_ID}
-      - GOOGLE_CLOUD_API_KEY=${GOOGLE_CLOUD_API_KEY}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - DATABASE_URL=postgresql://medical_user:medical_password123@medical-postgres:5432/medical_app
     env_file:
       - .env
+    volumes:
+      - ./:/app
+      - /tmp:/tmp
+      - medical-app_studies-data:/app/storage/studies:consistent
     ports:
       - "8956:8000"
-    command: python main.py
+    networks:
+      - holonauts-network
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+networks:
+  holonauts-network:
+    name: holonauts-network
+    external: true
+    driver: bridge
+
+volumes:
+  medical-app_studies-data:
+    external: true

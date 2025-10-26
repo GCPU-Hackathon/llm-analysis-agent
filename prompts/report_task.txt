@@ -1,0 +1,44 @@
+Task: Analyze the following brain tumor segmentation metrics and produce a comprehensive JSON report.
+
+Analysis Requirements:
+
+1. For each patient, provide:
+   - Numerical summary (WT/TC/ET volumes + centroid coordinates)
+   - Clinical decision (tumor_probable | tumor_possible | no_tumor_detected)
+   - Brief rationale (1-3 sentences)
+   - Complete Markdown report (report_md) ready for PDF conversion
+
+2. Decision Rules:
+   - tumor_probable: if WT>0 AND (TC>0 OR ET>0)
+   - tumor_possible: if WT>0 AND TC=0 AND ET=0
+   - no_tumor_detected: if WT=0 (therefore TC=ET=0)
+
+3. Important Notes:
+   - Volumes < 0.05 mL are highly sensitive to noise → mention in notes
+   - asymmetry_index = -1.0 may be a sentinel value (not calculated) → flag it
+
+4. Output Format (strict JSON schema):
+
+[
+  {
+    "patient": "string",
+    "metrics": {
+      "WT_mL": 0.0,
+      "TC_mL": 0.0,
+      "ET_mL": 0.0,
+      "centroid_mm": {"x": 0.0, "y": 0.0, "z": 0.0},
+      "notes": ["string", "..."]
+    },
+    "decision": "tumor_probable | tumor_possible | no_tumor_detected",
+    "rationale": "string (1-3 sentences, concise)",
+    "disclaimer": "string",
+    "report_md": "string (complete Markdown)"
+  }
+]
+
+5. Requirements for report_md:
+   - Use Markdown headings (#, ##), tables, and bullet points
+   - Professional style suitable for PDF export
+   - Include: header (patient, date, study), KPIs, volume table, centroid position, 
+     decision & rationale, limitations, glossary
+   - No external links or images
