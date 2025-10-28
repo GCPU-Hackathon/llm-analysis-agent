@@ -5,6 +5,8 @@ from google.genai import types
 import uuid
 import os
 import json
+import logging
+import time
 from pathlib import Path
 from markdown_pdf import MarkdownPdf, Section
 from sqlalchemy.orm import Session
@@ -23,6 +25,10 @@ from database import get_db, Conversation, Message
 RAG_CORPUS = os.getenv("RAG_CORPUS")
 MODEL_ID = os.getenv("MODEL_ID")
 GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY")
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def read_system_prompt() -> str:
     """Read system prompt from text file"""
@@ -95,19 +101,31 @@ def convert_md_to_pdf(study_code: str, markdown_content: str) -> str:
 def generate_response(messages: List[Dict]) -> str:
     """Generate response using Google genai with RAG"""
     
-    client = genai.Client(
-        vertexai=True,
-        api_key=GOOGLE_CLOUD_API_KEY,
-    )
+    logger.info(f"Starting response generation with {len(messages)} messages")
+    logger.info(f"Using model: {MODEL_ID}")
+    logger.info(f"Using RAG corpus: {RAG_CORPUS}")
+    
+    start_time = time.time()
+    
+    try:
+        client = genai.Client(
+            vertexai=True,
+            api_key=GOOGLE_CLOUD_API_KEY
+        )
+        logger.info("GenAI client initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize GenAI client: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to initialize GenAI client: {str(e)}")
 
     # Convert messages to genai format
     contents = []
-    for msg in messages:
+    for i, msg in enumerate(messages):
         role = "model" if msg["role"] == "assistant" else "user"
         contents.append(types.Content(
             role=role,
             parts=[types.Part(text=msg["content"])]
         ))
+        logger.debug(f"Message {i}: role={role}, content_length={len(msg['content'])}")
 
     # Configure RAG tools
     tools = [
@@ -123,6 +141,7 @@ def generate_response(messages: List[Dict]) -> str:
             )
         )
     ]
+    logger.info("RAG tools configured")
 
     # Generation configuration
     generate_content_config = types.GenerateContentConfig(
@@ -153,25 +172,56 @@ def generate_response(messages: List[Dict]) -> str:
             thinking_budget=-1,
         ),
     )
+    logger.info("Generation configuration created")
 
     # Generate response
     full_response = ""
+    chunk_count = 0
     try:
+        logger.info("Starting content generation stream...")
         for chunk in client.models.generate_content_stream(
             model=MODEL_ID,
             contents=contents,
             config=generate_content_config,
         ):
+            chunk_count += 1
             if not chunk.candidates or not chunk.candidates[0].content or not chunk.candidates[0].content.parts:
+                logger.debug(f"Chunk {chunk_count}: Empty or invalid chunk")
                 continue
             full_response += chunk.text
+            if chunk_count % 10 == 0:  # Log every 10 chunks
+                logger.debug(f"Processed {chunk_count} chunks, response length: {len(full_response)}")
+        
+        elapsed_time = time.time() - start_time
+        logger.info(f"Content generation completed successfully in {elapsed_time:.2f} seconds")
+        logger.info(f"Total chunks processed: {chunk_count}")
+        logger.info(f"Final response length: {len(full_response)} characters")
+        
     except Exception as e:
+        elapsed_time = time.time() - start_time
+        error_msg = str(e)
+        logger.error(f"Content generation failed after {elapsed_time:.2f} seconds")
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error message: {error_msg}")
+        
+        # Check for specific error types
+        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+            logger.error("Rate limit or quota exceeded - this is a Google API limit")
+            logger.error("Consider implementing exponential backoff or reducing request frequency")
+        elif "PERMISSION_DENIED" in error_msg:
+            logger.error("Permission denied - check API key and project permissions")
+        elif "INVALID_ARGUMENT" in error_msg:
+            logger.error("Invalid argument - check request parameters")
+        
+        logger.error(f"Full error details: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to generate response: {str(e)}")
     
     return full_response
 
 async def start_conversation(req: StartConversationRequest, db: Session) -> StartConversationResponse:
     """Start a new conversation with RAG"""
+    
+    logger.info(f"Starting conversation for study_id: {req.study_id}, study_code: {req.study_code}")
     
     conversation_id = str(uuid.uuid4())
     
@@ -180,9 +230,15 @@ async def start_conversation(req: StartConversationRequest, db: Session) -> Star
     system_prompt = req.system_prompt if req.system_prompt else read_system_prompt()
     messages.append({"role": "system", "content": system_prompt})
     
-    study_metrics = read_study_metrics(req.study_code)
-    report_task = read_report_task()
+    try:
+        study_metrics = read_study_metrics(req.study_code)
+        logger.info(f"Successfully loaded study metrics for {req.study_code}")
+    except Exception as e:
+        logger.error(f"Failed to load study metrics for {req.study_code}: {str(e)}")
+        raise HTTPException(status_code=404, detail=f"Study metrics not found for {req.study_code}")
     
+    report_task = read_report_task()
+
     # Combine report task and study metrics
     enhanced_prompt = f"""
     {report_task}
@@ -195,55 +251,86 @@ async def start_conversation(req: StartConversationRequest, db: Session) -> Star
     messages.append({"role": "user", "content": enhanced_prompt})
     
     # Generate response
+    logger.info("About to call generate_response")
     response_text = generate_response(messages)
+    logger.info("Successfully generated response")
     
     # Extract JSON from markdown code blocks and then extract report_md
+    logger.info("Processing response to extract report markdown")
     if response_text.strip().startswith("```json"):
         start_marker = "```json"
         end_marker = "```"
         start_idx = response_text.find(start_marker) + len(start_marker)
         end_idx = response_text.rfind(end_marker)
         json_content = response_text[start_idx:end_idx].strip()
+        logger.info("Extracted JSON from markdown code blocks")
     else:
         json_content = response_text.strip()
+        logger.info("Using response as-is (no markdown code blocks)")
     
     # Parse JSON and extract report_md
-    response_data = json.loads(json_content)
+    try:
+        response_data = json.loads(json_content)
+        logger.info("Successfully parsed JSON response")
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON response: {str(e)}")
+        logger.error(f"JSON content preview: {json_content[:200]}...")
+        raise HTTPException(status_code=500, detail="Failed to parse AI response as JSON")
     
     # Extract the report_md content from the patient data
     if isinstance(response_data, list) and len(response_data) > 0:
         patient_data = response_data[0]
         if "report_md" in patient_data:
             report_md_content = patient_data["report_md"]
-            report_file_path = save_report_md(req.study_code, report_md_content)
-            pdf_file_path = convert_md_to_pdf(req.study_code, report_md_content)
+            logger.info("Successfully extracted report_md from response")
+            try:
+                report_file_path = save_report_md(req.study_code, report_md_content)
+                logger.info(f"Saved markdown report to: {report_file_path}")
+                pdf_file_path = convert_md_to_pdf(req.study_code, report_md_content)
+                logger.info(f"Converted to PDF: {pdf_file_path}")
+            except Exception as e:
+                logger.error(f"Failed to save reports: {str(e)}")
+                # Continue anyway - don't fail the whole request
         else:
+            logger.warning("No report_md found in response, saving full response")
             report_file_path = save_report_md(req.study_code, response_text)
     else:
+        logger.warning("Unexpected response format, saving full response")
         report_file_path = save_report_md(req.study_code, response_text)
     
     # Add assistant response
     messages.append({"role": "assistant", "content": response_text})
     
     # Store conversation in database
-    db_conversation = Conversation(
-        id=conversation_id,
-        study_id=str(req.study_id),
-        system_prompt=req.system_prompt
-    )
-    db.add(db_conversation)
-    db.flush()
-    
-    # Store messages in database
-    for msg in messages:
-        db_message = Message(
-            conversation_id=conversation_id,
-            role=msg["role"],
-            content=msg["content"]
+    try:
+        logger.info(f"Storing conversation in database with ID: {conversation_id}")
+        db_conversation = Conversation(
+            id=conversation_id,
+            study_id=str(req.study_id),
+            system_prompt=req.system_prompt
         )
-        db.add(db_message)
+        db.add(db_conversation)
+        db.flush()
+        
+        # Store messages in database
+        logger.info(f"Storing {len(messages)} messages in database")
+        for msg in messages:
+            db_message = Message(
+                conversation_id=conversation_id,
+                role=msg["role"],
+                content=msg["content"]
+            )
+            db.add(db_message)
+        
+        db.commit()
+        logger.info("Successfully stored conversation and messages in database")
+        
+    except Exception as e:
+        logger.error(f"Failed to store conversation in database: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to store conversation")
     
-    db.commit()
+    logger.info(f"Conversation completed successfully for study {req.study_code}")
     
     return StartConversationResponse(
         conversation_id=conversation_id,
