@@ -1,5 +1,5 @@
 from typing import List, Dict
-from fastapi import HTTPException
+from fastapi import HTTPException, Depends
 from google import genai
 from google.genai import types
 import uuid
@@ -7,6 +7,7 @@ import os
 import json
 from pathlib import Path
 from markdown_pdf import MarkdownPdf, Section
+from sqlalchemy.orm import Session
 
 from schemas.models import (
     StartConversationRequest, 
@@ -14,16 +15,14 @@ from schemas.models import (
     StartConversationResponse,
     ConversationResponse,
     ConversationHistory,
-    Message
+    Message as MessageSchema
 )
+from database import get_db, Conversation, Message
 
 # Configuration from environment variables
 RAG_CORPUS = os.getenv("RAG_CORPUS")
 MODEL_ID = os.getenv("MODEL_ID")
 GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY")
-
-# In-memory storage (replace with database later)
-conversations = {}
 
 def read_system_prompt() -> str:
     """Read system prompt from text file"""
@@ -171,7 +170,7 @@ def generate_response(messages: List[Dict]) -> str:
     
     return full_response
 
-async def start_conversation(req: StartConversationRequest) -> StartConversationResponse:
+async def start_conversation(req: StartConversationRequest, db: Session) -> StartConversationResponse:
     """Start a new conversation with RAG"""
     
     conversation_id = str(uuid.uuid4())
@@ -226,30 +225,46 @@ async def start_conversation(req: StartConversationRequest) -> StartConversation
     # Add assistant response
     messages.append({"role": "assistant", "content": response_text})
     
-    # Store conversation
-    conversations[conversation_id] = {
-        "messages": messages,
-        "system_prompt": req.system_prompt,
-        "study_id": req.study_id
-    }
+    # Store conversation in database
+    db_conversation = Conversation(
+        id=conversation_id,
+        study_id=str(req.study_id),
+        system_prompt=req.system_prompt
+    )
+    db.add(db_conversation)
+    db.flush()
+    
+    # Store messages in database
+    for msg in messages:
+        db_message = Message(
+            conversation_id=conversation_id,
+            role=msg["role"],
+            content=msg["content"]
+        )
+        db.add(db_message)
+    
+    db.commit()
     
     return StartConversationResponse(
         conversation_id=conversation_id,
         study_id=req.study_id
     )
 
-async def continue_conversation(conversation_id: str, req: ContinueConversationRequest) -> ConversationResponse:
+async def continue_conversation(conversation_id: str, req: ContinueConversationRequest, db: Session) -> ConversationResponse:
     """Continue an existing conversation"""
     
-    if conversation_id not in conversations:
+    # Get conversation from database
+    db_conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    if not db_conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
     # Verify study_id matches
-    if conversations[conversation_id]["study_id"] != req.study_id:
+    if int(db_conversation.study_id) != req.study_id:
         raise HTTPException(status_code=403, detail="Study ID mismatch")
     
-    # Get existing messages
-    messages = conversations[conversation_id]["messages"].copy()
+    # Get existing messages from database
+    db_messages = db.query(Message).filter(Message.conversation_id == conversation_id).all()
+    messages = [{"role": msg.role, "content": msg.content} for msg in db_messages]
     
     # Add new user message
     messages.append({"role": "user", "content": req.question})
@@ -260,28 +275,44 @@ async def continue_conversation(conversation_id: str, req: ContinueConversationR
     # Add assistant response
     messages.append({"role": "assistant", "content": response_text})
     
-    # Update storage
-    conversations[conversation_id]["messages"] = messages
+    # Store new messages in database
+    user_message = Message(
+        conversation_id=conversation_id,
+        role="user",
+        content=req.question
+    )
+    assistant_message = Message(
+        conversation_id=conversation_id,
+        role="assistant",
+        content=response_text
+    )
+    
+    db.add(user_message)
+    db.add(assistant_message)
+    db.commit()
     
     return ConversationResponse(
         conversation_id=conversation_id,
         response=response_text,
-        messages=[Message(**msg) for msg in messages],
+        messages=[MessageSchema(**msg) for msg in messages],
         study_id=req.study_id
     )
 
-async def get_conversation(conversation_id: str) -> ConversationHistory:
+async def get_conversation(conversation_id: str, db: Session) -> ConversationHistory:
     """Get conversation history"""
     
-    if conversation_id not in conversations:
+    # Get conversation from database
+    db_conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    if not db_conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    conv_data = conversations[conversation_id]
+    # Get messages from database
+    db_messages = db.query(Message).filter(Message.conversation_id == conversation_id).all()
     
     return ConversationHistory(
         conversation_id=conversation_id,
-        study_id=conv_data["study_id"],
-        messages=[Message(**msg) for msg in conv_data["messages"]]
+        study_id=int(db_conversation.study_id),
+        messages=[MessageSchema(role=msg.role, content=msg.content) for msg in db_messages]
     )
 
 async def health_check() -> Dict:
