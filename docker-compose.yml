@@ -24,7 +24,6 @@ services:
       - "1111:8000"
     networks:
       - holonauts-network
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 networks:
   holonauts-network:

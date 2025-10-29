@@ -264,8 +264,9 @@ if __name__ == "__main__":
             host="0.0.0.0", 
             port=8000,
             ssl_keyfile=ssl_keyfile,
-            ssl_certfile=ssl_certfile
+            ssl_certfile=ssl_certfile,
+            reload=True
         )
     else:
         print("SSL certificates not found, starting server with HTTP...")
-        uvicorn.run(app, host="0.0.0.0", port=8000)
+        uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
