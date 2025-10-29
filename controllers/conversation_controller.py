@@ -340,7 +340,7 @@ async def start_conversation(req: StartConversationRequest, db: Session) -> Star
 def detect_correction(question: str) -> bool:
     """Detect if the question contains correction keywords"""
     correction_keywords = [
-        "cassandra correction",
+        "correction",
     ]
     
     question_lower = question.lower()
