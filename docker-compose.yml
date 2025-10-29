@@ -34,3 +34,5 @@ networks:
 volumes:
   medical-app_studies-data:
     external: true
+  ssl-certificates:
+    external: true

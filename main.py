@@ -247,26 +247,3 @@ async def root():
         "model": MODEL_ID,
         "rag_enabled": True
     }
-
-if __name__ == "__main__":
-    import uvicorn
-    
-    ssl_cert_path = "/app/ssl/certificate.crt"
-    ssl_key_path = "/app/ssl/private.key"
-    
-    ssl_keyfile = ssl_key_path if os.path.exists(ssl_key_path) else None
-    ssl_certfile = ssl_cert_path if os.path.exists(ssl_cert_path) else None
-    
-    if ssl_keyfile and ssl_certfile:
-        print("Starting server with HTTPS support...")
-        uvicorn.run(
-            app, 
-            host="0.0.0.0", 
-            port=8000,
-            ssl_keyfile=ssl_keyfile,
-            ssl_certfile=ssl_certfile,
-            reload=True
-        )
-    else:
-        print("SSL certificates not found, starting server with HTTP...")
-        uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)

@@ -20,3 +20,6 @@ COPY --chown=appuser:appgroup . .
 
 USER appuser
 ENV HOME=/home/appuser
+
+RUN chmod +x docker-entrypoint.sh
+ENTRYPOINT ["./docker-entrypoint.sh"]
