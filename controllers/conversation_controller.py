@@ -257,67 +257,46 @@ async def start_conversation(req: StartConversationRequest, db: Session) -> Star
     
     # Extract JSON from markdown code blocks and then extract report_md
     logger.info("Processing response to extract report markdown")
-    
-    # Check if response contains JSON (for structured tasks)
-    if response_text.strip().startswith("```json") or (response_text.strip().startswith("[") and "report_md" in response_text):
-        logger.info("Detected JSON response - processing structured task response")
-        
-        if response_text.strip().startswith("```json"):
-            start_marker = "```json"
-            end_marker = "```"
-            start_idx = response_text.find(start_marker) + len(start_marker)
-            end_idx = response_text.rfind(end_marker)
-            json_content = response_text[start_idx:end_idx].strip()
-            logger.info("Extracted JSON from markdown code blocks")
-        else:
-            json_content = response_text.strip()
-            logger.info("Using response as-is (raw JSON)")
-        
-        # Parse JSON and extract report_md
-        try:
-            response_data = json.loads(json_content)
-            logger.info("Successfully parsed JSON response")
-            
-            # Extract the report_md content from the patient data
-            if isinstance(response_data, list) and len(response_data) > 0:
-                patient_data = response_data[0]
-                if "report_md" in patient_data:
-                    report_md_content = patient_data["report_md"]
-                    logger.info("Successfully extracted report_md from response")
-                    try:
-                        report_file_path = save_report_md(req.study_code, report_md_content)
-                        logger.info(f"Saved markdown report to: {report_file_path}")
-                        pdf_file_path = convert_md_to_pdf(req.study_code, report_md_content)
-                        logger.info(f"Converted to PDF: {pdf_file_path}")
-                    except Exception as e:
-                        logger.error(f"Failed to save reports: {str(e)}")
-                        # Continue anyway - don't fail the whole request
-                else:
-                    logger.warning("No report_md found in JSON response, saving full response")
-                    report_file_path = save_report_md(req.study_code, response_text)
-            else:
-                logger.warning("Unexpected JSON response format, saving full response")
-                report_file_path = save_report_md(req.study_code, response_text)
-                
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON response: {str(e)}")
-            logger.error(f"JSON content preview: {json_content[:200]}...")
-            # Save as markdown anyway
-            report_file_path = save_report_md(req.study_code, response_text)
-            
+    if response_text.strip().startswith("```json"):
+        start_marker = "```json"
+        end_marker = "```"
+        start_idx = response_text.find(start_marker) + len(start_marker)
+        end_idx = response_text.rfind(end_marker)
+        json_content = response_text[start_idx:end_idx].strip()
+        logger.info("Extracted JSON from markdown code blocks")
     else:
-        logger.info("Detected plain text response - saving as markdown directly")
-        # For plain text responses, save directly as markdown
+        json_content = response_text.strip()
+        logger.info("Using response as-is (no markdown code blocks)")
+    
+    # Parse JSON and extract report_md
+    try:
+        response_data = json.loads(json_content)
+        logger.info("Successfully parsed JSON response")
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON response: {str(e)}")
+        logger.error(f"JSON content preview: {json_content[:200]}...")
+        raise HTTPException(status_code=500, detail="Failed to parse AI response as JSON")
+    
+    # Extract the report_md content from the patient data
+    if isinstance(response_data, list) and len(response_data) > 0:
+        patient_data = response_data[0]
+        if "report_md" in patient_data:
+            report_md_content = patient_data["report_md"]
+            logger.info("Successfully extracted report_md from response")
+            try:
+                report_file_path = save_report_md(req.study_code, report_md_content)
+                logger.info(f"Saved markdown report to: {report_file_path}")
+                pdf_file_path = convert_md_to_pdf(req.study_code, report_md_content)
+                logger.info(f"Converted to PDF: {pdf_file_path}")
+            except Exception as e:
+                logger.error(f"Failed to save reports: {str(e)}")
+                # Continue anyway - don't fail the whole request
+        else:
+            logger.warning("No report_md found in response, saving full response")
+            report_file_path = save_report_md(req.study_code, response_text)
+    else:
+        logger.warning("Unexpected response format, saving full response")
         report_file_path = save_report_md(req.study_code, response_text)
-        logger.info(f"Saved text response to: {report_file_path}")
-        
-        # Optionally convert to PDF for plain text responses too
-        try:
-            pdf_file_path = convert_md_to_pdf(req.study_code, response_text)
-            logger.info(f"Converted text response to PDF: {pdf_file_path}")
-        except Exception as e:
-            logger.error(f"Failed to convert text response to PDF: {str(e)}")
-            # Continue anyway
     
     # Add assistant response
     messages.append({"role": "assistant", "content": response_text})
@@ -358,8 +337,45 @@ async def start_conversation(req: StartConversationRequest, db: Session) -> Star
         study_id=req.study_id
     )
 
+def detect_correction(question: str) -> bool:
+    """Detect if the question contains correction keywords"""
+    correction_keywords = [
+        "cassandra correction",
+    ]
+    
+    question_lower = question.lower()
+    for keyword in correction_keywords:
+        if keyword in question_lower:
+            return True
+    return False
+
 async def continue_conversation(conversation_id: str, req: ContinueConversationRequest, db: Session) -> ConversationResponse:
     """Continue an existing conversation"""
+    
+    logger.info(f"Continuing conversation {conversation_id} with question: {req.question[:100]}...")
+    
+    # Check if this is a correction
+    is_correction = detect_correction(req.question)
+    
+    if is_correction:
+        logger.info(f"Detected correction in conversation {conversation_id}: {req.question}")
+        
+        # Store the correction message in database
+        # user_message = Message(
+        #     conversation_id=conversation_id,
+        #     role="user",
+        #     content=req.question
+        # )
+        # db.add(user_message)
+        # db.commit()
+        
+        # Return feedback response without generating LLM response
+        return ConversationResponse(
+            conversation_id=conversation_id,
+            response="Thanks for feedback",
+            messages=[],
+            feedback=True
+        )
     
     # Get conversation from database
     db_conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
@@ -398,7 +414,8 @@ async def continue_conversation(conversation_id: str, req: ContinueConversationR
     return ConversationResponse(
         conversation_id=conversation_id,
         response=response_text,
-        messages=[MessageSchema(**msg) for msg in messages]
+        messages=[MessageSchema(**msg) for msg in messages],
+        feedback=False
     )
 
 async def get_conversation(conversation_id: str, db: Session) -> ConversationHistory:
