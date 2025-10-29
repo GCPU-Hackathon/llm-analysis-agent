@@ -12,8 +12,6 @@ class StartConversationRequest(BaseModel):
 
 class ContinueConversationRequest(BaseModel):
     question: str
-    study_id: int
-    study_code: str
 
 class StartConversationResponse(BaseModel):
     conversation_id: str

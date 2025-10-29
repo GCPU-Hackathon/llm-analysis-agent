@@ -345,10 +345,6 @@ async def continue_conversation(conversation_id: str, req: ContinueConversationR
     if not db_conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    # Verify study_id matches
-    if int(db_conversation.study_id) != req.study_id:
-        raise HTTPException(status_code=403, detail="Study ID mismatch")
-    
     # Get existing messages from database
     db_messages = db.query(Message).filter(Message.conversation_id == conversation_id).all()
     messages = [{"role": msg.role, "content": msg.content} for msg in db_messages]
@@ -381,8 +377,7 @@ async def continue_conversation(conversation_id: str, req: ContinueConversationR
     return ConversationResponse(
         conversation_id=conversation_id,
         response=response_text,
-        messages=[MessageSchema(**msg) for msg in messages],
-        study_id=req.study_id
+        messages=[MessageSchema(**msg) for msg in messages]
     )
 
 async def get_conversation(conversation_id: str, db: Session) -> ConversationHistory:
