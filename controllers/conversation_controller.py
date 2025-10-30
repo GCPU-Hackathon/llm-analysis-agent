@@ -384,6 +384,7 @@ async def continue_conversation(conversation_id: str, req: ContinueConversationR
         raise HTTPException(status_code=404, detail="Conversation not found")
     
     # Get existing messages from database
+    db_messages = db.query(Message).filter(Message.conversation_id == conversation_id).all()
     messages = [{"role": msg.role, "content": msg.content} for msg in db_messages]
     
     # Add new user message
@@ -391,6 +392,9 @@ async def continue_conversation(conversation_id: str, req: ContinueConversationR
     
     # Generate response with full history
     response_text = generate_response(messages)
+    
+    # Add assistant response
+    messages.append({"role": "assistant", "content": response_text})
     
     # Store new messages in database
     user_message = Message(
