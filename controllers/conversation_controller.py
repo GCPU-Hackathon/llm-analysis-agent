@@ -377,7 +377,18 @@ async def continue_conversation(conversation_id: str, req: ContinueConversationR
             messages=[],
             feedback=True
         )
-
+    
+    # Get conversation from database
+    db_conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    if not db_conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    # Get existing messages from database
+    messages = [{"role": msg.role, "content": msg.content} for msg in db_messages]
+    
+    # Add new user message
+    messages.append({"role": "user", "content": req.question})
+    
     # Generate response with full history
     response_text = generate_response(messages)
     
