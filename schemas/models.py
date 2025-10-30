@@ -20,7 +20,6 @@ class StartConversationResponse(BaseModel):
 class ConversationResponse(BaseModel):
     conversation_id: str
     response: str
-    messages: List[Message]
     feedback: Optional[bool] = None
 
 class ConversationHistory(BaseModel):
