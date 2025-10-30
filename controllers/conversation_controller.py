@@ -400,7 +400,6 @@ async def continue_conversation(conversation_id: str, req: ContinueConversationR
     return ConversationResponse(
         conversation_id=conversation_id,
         response=response_text,
-        messages=[MessageSchema(**msg) for msg in messages],
         feedback=False
     )
 
